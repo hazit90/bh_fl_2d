@@ -59,10 +59,12 @@ class BlackHoleGame extends FlameGame
 
     for (int s = 0; s < stepsPerFrame; s++) {
       for (final ray in rays) {
-        ray.step(dLambda, blackHole.rS);
-        if (ray.trail.length > maxTrail) {
-          // Keep memory bounded
-          ray.trail.removeRange(0, ray.trail.length - maxTrail);
+        if (!ray.isCaptured) {
+          ray.step(dLambda, blackHole.rS);
+          if (ray.trail.length > maxTrail) {
+            // Keep memory bounded for active rays only
+            ray.trail.removeRange(0, ray.trail.length - maxTrail);
+          }
         }
       }
     }
@@ -114,8 +116,10 @@ class BlackHoleGame extends FlameGame
         2.5e9; // meters represented as a tiny dot in world units
 
     for (final ray in rays) {
-      // Current position
-      canvas.drawCircle(Offset(ray.x, ray.y), pointRadius, pointPaint);
+      if (!ray.isCaptured) {
+        // Current position for active rays only
+        canvas.drawCircle(Offset(ray.x, ray.y), pointRadius, pointPaint);
+      }
     }
 
     // Trails with fading alpha per segment
@@ -230,6 +234,7 @@ class Ray {
 
   // Trail in world meters
   final List<Offset> trail;
+  bool isCaptured = false; // true once it crosses the event horizon
 
   Ray._(this.x, this.y, this.r, this.phi, this.dr, this.dphi, this.E, this.L)
     : trail = [Offset(x, y)];
@@ -258,7 +263,11 @@ class Ray {
   }
 
   void step(double dLambda, double rS) {
-    if (r <= rS) return; // stop inside event horizon
+    if (isCaptured) return;
+    if (r <= rS) {
+      isCaptured = true;
+      return; // already inside horizon
+    }
 
     final y0 = [r, phi, dr, dphi];
     final k1 = List<double>.filled(4, 0);
@@ -290,6 +299,11 @@ class Ray {
     y = r * math.sin(phi);
 
     trail.add(Offset(x, y));
+
+    // Mark captured if it crossed into the horizon this step
+    if (r <= rS) {
+      isCaptured = true;
+    }
   }
 
   Ray cloneWith(List<double> s) {
