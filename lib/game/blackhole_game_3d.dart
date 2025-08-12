@@ -7,6 +7,7 @@ import 'package:flame/game.dart' show FlameGame;
 import 'package:vector_math/vector_math_64.dart' as vm;
 import 'package:flutter/foundation.dart' show compute;
 import 'isolate_renderer.dart' as ir;
+import 'native_renderer.dart';
 
 const double c = 299792458.0;
 const double G = 6.67430e-11;
@@ -69,7 +70,7 @@ class BlackHoleSim3d extends FlameGame {
   }
 
   Future<void> renderFrame() async {
-    // Prepare request payload for isolate
+    // Try native path first; fall back to Dart isolate renderer.
     Map<String, Object?>? bg;
     if (_background != null && _bgRgba != null) {
       bg = {
@@ -78,6 +79,40 @@ class BlackHoleSim3d extends FlameGame {
         'rgba': _bgRgba!,
       };
     }
+    final native = NativeRenderer.instance();
+    if (native != null) {
+      try {
+        final rgba = native.render(
+          width: imageWidth,
+          height: imageHeight,
+          camPos: Float64List.fromList([
+            cam.position.x,
+            cam.position.y,
+            cam.position.z,
+          ]),
+          camTarget: Float64List.fromList([
+            cam.target.x,
+            cam.target.y,
+            cam.target.z,
+          ]),
+          camUp: Float64List.fromList([cam.up.x, cam.up.y, cam.up.z]),
+          fovY: cam.fovY,
+          rS: blackHole.rS,
+          cubeHalfSize: cubeHalfSize,
+          maxSteps: 4000,
+          dLambda: 1.0,
+          bgRgba: _bgRgba,
+          bgW: _background?.width ?? 0,
+          bgH: _background?.height ?? 0,
+        );
+        await buffer.rebuildImageFromRgba(rgba);
+        return;
+      } catch (_) {
+        // Fall through to isolate renderer
+      }
+    }
+
+    // Prepare request payload for isolate
     final req = <String, Object?>{
       'width': imageWidth,
       'height': imageHeight,
@@ -93,8 +128,6 @@ class BlackHoleSim3d extends FlameGame {
       },
       'bg': bg,
     };
-
-    // Offload heavy render
     final rgba = await compute(ir.renderFrameIsolate, req);
     await buffer.rebuildImageFromRgba(rgba);
   }

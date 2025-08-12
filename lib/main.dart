@@ -93,7 +93,7 @@ class _GameScreen3DState extends State<_GameScreen3D> {
                 Slider(
                   value: inclDeg,
                   onChanged: (v) => setState(() => inclDeg = v),
-                  min: 0.0,
+                  min: -90.0,
                   max: 90.0,
                 ),
               ],
