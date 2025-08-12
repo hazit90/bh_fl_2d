@@ -9,12 +9,12 @@ const double c = 299792458.0; // m/s
 const double G = 6.67430e-11; // m^3 kg^-1 s^-2
 
 class BlackHoleGame extends FlameGame
-    with PanDetector, ScaleDetector, ScrollDetector {
+    with PanDetector, ScaleDetector, ScrollDetector, TapDetector {
   BlackHoleGame({double? mass})
-      : blackHole = BlackHole(
-          position: Vector2.zero(),
-          mass: mass ?? 8.54e36, // Sagittarius A*
-        );
+    : blackHole = BlackHole(
+        position: Vector2.zero(),
+        mass: mass ?? 8.54e36, // Sagittarius A*
+      );
 
   // Viewport in meters (half-extents, like the original glOrtho)
   final double _baseWidthMeters = 1.0e11;
@@ -48,7 +48,9 @@ class BlackHoleGame extends FlameGame
     for (int i = -4; i <= 4; i++) {
       if (i == 0) continue;
       final y = 3.2760630272e10 + i * 1.2e9;
-      rays.add(Ray.fromCartesian(Vector2(-1.05e11, y), Vector2(c, 0.0), blackHole.rS));
+      rays.add(
+        Ray.fromCartesian(Vector2(-1.05e11, y), Vector2(c, 0.0), blackHole.rS),
+      );
     }
   }
 
@@ -69,7 +71,7 @@ class BlackHoleGame extends FlameGame
 
   @override
   void render(Canvas canvas) {
-  super.render(canvas);
+    super.render(canvas);
     // Set up a world->screen transform mimicking glOrtho(left,right,bottom,top)
     final widthMeters = _baseWidthMeters / zoom;
     final heightMeters = _baseHeightMeters / zoom;
@@ -108,7 +110,8 @@ class BlackHoleGame extends FlameGame
     final pointPaint = Paint()
       ..color = const Color(0xFFFF0000)
       ..style = PaintingStyle.fill;
-    const pointRadius = 2.5e9; // meters represented as a tiny dot in world units
+    const pointRadius =
+        2.5e9; // meters represented as a tiny dot in world units
 
     for (final ray in rays) {
       // Current position
@@ -126,11 +129,32 @@ class BlackHoleGame extends FlameGame
         final alpha = (t * 0xFF).clamp(12, 255).toInt(); // 5%-100%
         final paint = Paint()
           ..color = Color.fromARGB(alpha, 255, 255, 255)
-          ..strokeWidth = 2.0e9 // meters
+          ..strokeWidth =
+              2.0e9 // meters
           ..style = PaintingStyle.stroke;
         canvas.drawLine(trail[i], trail[i + 1], paint);
       }
     }
+  }
+
+  // Convert a screen-space position (pixels) to world meters
+  Offset _screenToWorld(Vector2 screen) {
+    final widthMeters = _baseWidthMeters / zoom;
+    final heightMeters = _baseHeightMeters / zoom;
+    final sx = screen.x;
+    final sy = screen.y;
+    final wx = ((sx - size.x / 2) * (2 * widthMeters) / size.x) + offsetX;
+    final wy = (-(sy - size.y / 2) * (2 * heightMeters) / size.y) + offsetY;
+    return Offset(wx, wy);
+  }
+
+  @override
+  void onTapDown(TapDownInfo info) {
+    final world = _screenToWorld(info.eventPosition.global);
+    // Spawn at pointer, move right
+    final startPos = Vector2(world.dx, world.dy);
+    final dir = Vector2(c, 0);
+    rays.add(Ray.fromCartesian(startPos, dir, blackHole.rS));
   }
 
   // Input: panning via drag, zoom via pinch or scroll
@@ -140,7 +164,8 @@ class BlackHoleGame extends FlameGame
     final widthMeters = _baseWidthMeters / zoom;
     final heightMeters = _baseHeightMeters / zoom;
     final dxWorld = info.delta.global.x * (2 * widthMeters) / size.x;
-    final dyWorld = -info.delta.global.y * (2 * heightMeters) / size.y; // flip y
+    final dyWorld =
+        -info.delta.global.y * (2 * heightMeters) / size.y; // flip y
     offsetX -= dxWorld;
     offsetY -= dyWorld;
   }
@@ -152,6 +177,9 @@ class BlackHoleGame extends FlameGame
     final s = (scaleVec.x + scaleVec.y) / 2;
     if (s != 1.0) {
       zoom = (zoom * s).clamp(0.05, 40.0);
+      // Keep black hole centered when zooming
+      offsetX = blackHole.position.x;
+      offsetY = blackHole.position.y;
     }
   }
 
@@ -161,13 +189,16 @@ class BlackHoleGame extends FlameGame
     if (scroll.y != 0) {
       final factor = scroll.y > 0 ? (1 / 1.1) : 1.1;
       zoom = (zoom * factor).clamp(0.05, 40.0);
+      // Keep black hole centered when zooming
+      offsetX = blackHole.position.x;
+      offsetY = blackHole.position.y;
     }
   }
 }
 
 class BlackHole {
   BlackHole({required this.position, required this.mass})
-      : rS = 2.0 * G * mass / (c * c);
+    : rS = 2.0 * G * mass / (c * c);
 
   final Vector2 position;
   final double mass; // kg
@@ -201,7 +232,7 @@ class Ray {
   final List<Offset> trail;
 
   Ray._(this.x, this.y, this.r, this.phi, this.dr, this.dphi, this.E, this.L)
-      : trail = [Offset(x, y)];
+    : trail = [Offset(x, y)];
 
   factory Ray.fromCartesian(Vector2 pos, Vector2 dir, double rS) {
     final x = pos.x.toDouble();
@@ -218,8 +249,10 @@ class Ray {
     // Conserved quantities for null geodesic
     final L = r * r * dphi;
     final f = 1.0 - rS / r;
-  final dtDLambda = math.sqrt((dr * dr) / (f * f) + (r * r * dphi * dphi) / f);
-  final E = f * dtDLambda;
+    final dtDLambda = math.sqrt(
+      (dr * dr) / (f * f) + (r * r * dphi * dphi) / f,
+    );
+    final E = f * dtDLambda;
 
     return Ray._(x, y, r, phi, dr, dphi, E, L);
   }
@@ -280,8 +313,8 @@ void geodesicRHS(Ray ray, List<double> out, double rS) {
 
   // d²r/dλ² from Schwarzschild null geodesic
   final dtDLambda = E / f;
-  out[2] = -
-          (rS / (2 * r * r)) * f * (dtDLambda * dtDLambda) +
+  out[2] =
+      -(rS / (2 * r * r)) * f * (dtDLambda * dtDLambda) +
       (rS / (2 * r * r * f)) * (dr * dr) +
       (r - rS) * (dphi * dphi);
 
@@ -289,7 +322,12 @@ void geodesicRHS(Ray ray, List<double> out, double rS) {
   out[3] = -2.0 * dr * dphi / r;
 }
 
-void _addState(List<double> a, List<double> b, double factor, List<double> out) {
+void _addState(
+  List<double> a,
+  List<double> b,
+  double factor,
+  List<double> out,
+) {
   for (var i = 0; i < 4; i++) {
     out[i] = a[i] + b[i] * factor;
   }
