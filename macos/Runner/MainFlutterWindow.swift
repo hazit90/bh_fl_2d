@@ -10,6 +10,12 @@ class MainFlutterWindow: NSWindow {
 
     RegisterGeneratedPlugins(registry: flutterViewController)
 
+    // Setup BH texture channel after plugins registration
+    let registrar = flutterViewController.registrar(forPlugin: "BHTexture")
+    if let appDelegate = NSApp.delegate as? AppDelegate {
+      appDelegate.setupBHTextureChannel(registrar)
+    }
+
     super.awakeFromNib()
   }
 }
