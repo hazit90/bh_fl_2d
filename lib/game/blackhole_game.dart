@@ -1,9 +1,5 @@
 import 'dart:math' as math;
 import 'dart:ui';
-import 'dart:ffi' as ffi;
-import 'package:ffi/ffi.dart' as pkg_ffi;
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart';
 
 import 'package:flame/events.dart';
 import 'package:flame/game.dart';
@@ -37,21 +33,9 @@ class BlackHoleGame extends FlameGame
   int stepsPerFrame = 2;
   int maxTrail = 2000;
 
-  // Optional Metal acceleration (macOS only)
-  late final _MetalBridge metal;
-  bool useGpu = false; // toggle
-  // HUD notifiers
-  final ValueNotifier<int> rayCount = ValueNotifier<int>(0);
-  final ValueNotifier<bool> gpuOn = ValueNotifier<bool>(false);
-
-  static const overlayHud = 'hud';
-
   @override
   Future<void> onLoad() async {
     await super.onLoad();
-    metal = _MetalBridge.maybeLoad();
-    overlays.add(overlayHud);
-    gpuOn.value = useGpu;
 
     // Seed a sample ray similar to the C++ example
     // Position (meters) and direction (m/s components)
@@ -73,33 +57,14 @@ class BlackHoleGame extends FlameGame
   void update(double dt) {
     super.update(dt);
 
-    if (metal.isAvailable && useGpu && rays.isNotEmpty) {
-      // GPU path: step state in place, then update cartesian/trails on CPU
-      metal.stepRays(rays, dLambda, blackHole.rS, stepsPerFrame);
+    for (int s = 0; s < stepsPerFrame; s++) {
       for (final ray in rays) {
-        if (ray.r <= blackHole.rS) continue;
-        ray.x = ray.r * math.cos(ray.phi);
-        ray.y = ray.r * math.sin(ray.phi);
-        ray.trail.add(Offset(ray.x, ray.y));
+        ray.step(dLambda, blackHole.rS);
         if (ray.trail.length > maxTrail) {
+          // Keep memory bounded
           ray.trail.removeRange(0, ray.trail.length - maxTrail);
         }
       }
-    } else {
-      // CPU path
-      for (int s = 0; s < stepsPerFrame; s++) {
-        for (final ray in rays) {
-          ray.step(dLambda, blackHole.rS);
-          if (ray.trail.length > maxTrail) {
-            ray.trail.removeRange(0, ray.trail.length - maxTrail);
-          }
-        }
-      }
-    }
-
-    // Update HUD ray count when it changes
-    if (rayCount.value != rays.length) {
-      rayCount.value = rays.length;
     }
   }
 
@@ -154,24 +119,20 @@ class BlackHoleGame extends FlameGame
     }
 
     // Trails with fading alpha per segment
-    final linePaint = Paint()
-      ..strokeWidth =
-          2.0e9 // meters
-      ..style = PaintingStyle.stroke;
-
     for (final ray in rays) {
       final trail = ray.trail;
       if (trail.length < 2) continue;
 
       final n = trail.length;
-      // Decimate segments when long trails to reduce draw calls
-      final step = math.max(1, (n / 600).floor());
-      for (int i = 0; i < n - 1; i += step) {
+      for (int i = 0; i < n - 1; i++) {
         final t = i / (n - 1);
         final alpha = (t * 0xFF).clamp(12, 255).toInt(); // 5%-100%
-        linePaint.color = Color.fromARGB(alpha, 255, 255, 255);
-        final j = math.min(i + step, n - 1);
-        canvas.drawLine(trail[i], trail[j], linePaint);
+        final paint = Paint()
+          ..color = Color.fromARGB(alpha, 255, 255, 255)
+          ..strokeWidth =
+              2.0e9 // meters
+          ..style = PaintingStyle.stroke;
+        canvas.drawLine(trail[i], trail[i + 1], paint);
       }
     }
   }
@@ -194,7 +155,6 @@ class BlackHoleGame extends FlameGame
     final startPos = Vector2(world.dx, world.dy);
     final dir = Vector2(c, 0);
     rays.add(Ray.fromCartesian(startPos, dir, blackHole.rS));
-    rayCount.value = rays.length;
   }
 
   // Input: panning via drag, zoom via pinch or scroll
@@ -236,96 +196,6 @@ class BlackHoleGame extends FlameGame
   }
 }
 
-// ======== FFI Bridge for Metal (macOS) ========
-final class _RayState extends ffi.Struct {
-  @ffi.Double()
-  external double r;
-  @ffi.Double()
-  external double phi;
-  @ffi.Double()
-  external double dr;
-  @ffi.Double()
-  external double dphi;
-  @ffi.Double()
-  external double E;
-  @ffi.Double()
-  external double L;
-}
-
-typedef _metal_is_available_c = ffi.Int32 Function();
-typedef _metal_is_available_dart = int Function();
-typedef _metal_step_rays_c =
-    ffi.Void Function(
-      ffi.Pointer<_RayState>,
-      ffi.Int32,
-      ffi.Double,
-      ffi.Double,
-      ffi.Int32,
-    );
-typedef _metal_step_rays_dart =
-    void Function(ffi.Pointer<_RayState>, int, double, double, int);
-
-class _MetalBridge {
-  final bool isAvailable;
-  final _metal_step_rays_dart? _step;
-  _MetalBridge._(this.isAvailable, this._step);
-
-  static _MetalBridge maybeLoad() {
-    if (!Platform.isMacOS) {
-      return _MetalBridge._(false, null);
-    }
-    try {
-      final lib = ffi.DynamicLibrary.process();
-      final isAvail = lib
-          .lookupFunction<_metal_is_available_c, _metal_is_available_dart>(
-            'metal_is_available',
-          )();
-      if (isAvail == 0) {
-        return _MetalBridge._(false, null);
-      }
-      final step = lib
-          .lookupFunction<_metal_step_rays_c, _metal_step_rays_dart>(
-            'metal_step_rays',
-          );
-      return _MetalBridge._(true, step);
-    } catch (_) {
-      return _MetalBridge._(false, null);
-    }
-  }
-
-  void stepRays(List<Ray> rays, double dLambda, double rS, int steps) {
-    if (!isAvailable || _step == null || rays.isEmpty) return;
-    // Allocate native array
-    final ptr = pkg_ffi.calloc<_RayState>(rays.length);
-    try {
-      for (var i = 0; i < rays.length; i++) {
-        final r = rays[i];
-        final s = ptr.elementAt(i).ref;
-        s.r = r.r;
-        s.phi = r.phi;
-        s.dr = r.dr;
-        s.dphi = r.dphi;
-        s.E = r.E;
-        s.L = r.L;
-      }
-
-      _step(ptr, rays.length, dLambda, rS, steps);
-
-      for (var i = 0; i < rays.length; i++) {
-        final r = rays[i];
-        final s = ptr.elementAt(i).ref;
-        r.r = s.r;
-        r.phi = s.phi;
-        r.dr = s.dr;
-        r.dphi = s.dphi;
-        // E and L conserved
-      }
-    } finally {
-      pkg_ffi.calloc.free(ptr);
-    }
-  }
-}
-
 class BlackHole {
   BlackHole({required this.position, required this.mass})
     : rS = 2.0 * G * mass / (c * c);
@@ -361,14 +231,6 @@ class Ray {
   // Trail in world meters
   final List<Offset> trail;
 
-  // Reused RK4 buffers to avoid per-step allocations
-  final List<double> _y0 = List<double>.filled(4, 0, growable: false);
-  final List<double> _k1 = List<double>.filled(4, 0, growable: false);
-  final List<double> _k2 = List<double>.filled(4, 0, growable: false);
-  final List<double> _k3 = List<double>.filled(4, 0, growable: false);
-  final List<double> _k4 = List<double>.filled(4, 0, growable: false);
-  final List<double> _tmp = List<double>.filled(4, 0, growable: false);
-
   Ray._(this.x, this.y, this.r, this.phi, this.dr, this.dphi, this.E, this.L)
     : trail = [Offset(x, y)];
 
@@ -398,16 +260,12 @@ class Ray {
   void step(double dLambda, double rS) {
     if (r <= rS) return; // stop inside event horizon
 
-    final y0 = _y0;
-    y0[0] = r;
-    y0[1] = phi;
-    y0[2] = dr;
-    y0[3] = dphi;
-    final k1 = _k1;
-    final k2 = _k2;
-    final k3 = _k3;
-    final k4 = _k4;
-    final tmp = _tmp;
+    final y0 = [r, phi, dr, dphi];
+    final k1 = List<double>.filled(4, 0);
+    final k2 = List<double>.filled(4, 0);
+    final k3 = List<double>.filled(4, 0);
+    final k4 = List<double>.filled(4, 0);
+    final tmp = List<double>.filled(4, 0);
 
     geodesicRHS(this, k1, rS);
     _addState(y0, k1, dLambda / 2.0, tmp);
