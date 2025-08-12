@@ -8,9 +8,9 @@ import 'package:flame/game.dart';
 const double c = 299792458.0; // m/s
 const double G = 6.67430e-11; // m^3 kg^-1 s^-2
 
-class BlackHoleGame extends FlameGame
+class BlackHoleSim2d extends FlameGame
     with PanDetector, ScaleDetector, ScrollDetector, TapDetector {
-  BlackHoleGame({double? mass})
+  BlackHoleSim2d({double? mass})
     : blackHole = BlackHole(
         position: Vector2.zero(),
         mass: mass ?? 8.54e36, // Sagittarius A*

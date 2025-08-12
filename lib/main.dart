@@ -12,7 +12,7 @@ class MainApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(body: GameWidget(game: BlackHoleGame())),
+      home: Scaffold(body: GameWidget(game: BlackHoleSim2d())),
     );
   }
 }
